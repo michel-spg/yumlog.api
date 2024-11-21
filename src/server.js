@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const mariadb = require("mariadb");
 const cors = require("cors");
+const multer = require("multer");
 
 const app = express();
 const port = 3000;
@@ -17,6 +18,23 @@ const pool = mariadb.createPool({
   password: "",
   database: "recipes_db", // Datenbankname
 });
+
+// Set up the storage destination and file naming
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "assets"); // specify the destination folder
+  },
+  filename: (req, file, cb) => {
+    // Generate a unique filename with the original extension
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`
+    );
+  },
+});
+
+const upload = multer({ storage });
 
 app.get("/api/recipes", async (req, res) => {
   try {
@@ -143,6 +161,71 @@ app.get("/api/recipes/:id", async (req, res) => {
   } catch (error) {
     console.error("Error fetching recipe:", error);
     res.status(500).json({ message: "Error fetching recipe" });
+  }
+});
+
+// POST-Endpoint für /api/recipes - Rezept erstellen
+app.post("/api/recipes", upload.single("image"), async (req, res) => {
+  try {
+    // Parse the formData fields
+    const { title, description, duration, instructions, ingredients } =
+      req.body;
+
+    console.log("Request body:", req.body);
+
+    // Handle the uploaded image file (optional)
+    const imageUrl = req.file ? `/images/${req.file.filename}` : null;
+
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Insert recipe into the `recipes` table
+    const recipeResult = await connection.query(
+      `
+      INSERT INTO recipes (title, description, duration, imageUrl, instructions)
+      VALUES (?, ?, ?, ?, ?)
+      `,
+      [title, description, duration, imageUrl, instructions]
+    );
+
+    console.log("Inserted recipe result:", recipeResult);
+    const recipeId = Number(recipeResult.insertId);
+    console.log("Inserted recipe ID:", recipeId);
+
+    // Insert ingredients into the `ingredients` table
+    if (ingredients && ingredients.length > 0) {
+      const ingredientValues = ingredients.map((ingredient) => [
+        recipeId,
+        ingredient.name,
+        ingredient.amount,
+      ]);
+
+      const placeholders = ingredientValues.map(() => "(?, ?, ?)").join(", ");
+      const flattenedValues = ingredientValues.flat();
+      console.log(flattenedValues);
+
+      await connection.query(
+        `
+        INSERT INTO ingredients (recipe_id, name, amount)
+        VALUES ${placeholders}
+        `,
+        flattenedValues
+      );
+    }
+
+    await connection.commit();
+
+    res.status(201).json({ message: "Recipe created successfully", recipeId });
+    connection.release();
+  } catch (error) {
+    console.error("Error creating recipe:", error);
+    res.status(500).json({ message: "Error creating recipe" });
+
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      console.error("Error rolling back transaction:", rollbackError);
+    }
   }
 });
 
