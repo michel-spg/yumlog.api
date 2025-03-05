@@ -53,6 +53,8 @@ app.get("/api/recipes", async (req, res) => {
         recipes
     `);
 
+    // console.log(recipeRows);
+
     // Zweite SQL-Abfrage, um alle Zutaten für die Rezepte zu erhalten
     const ingredientRows = await connection.query(`
       SELECT 
