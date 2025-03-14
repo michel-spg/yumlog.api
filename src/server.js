@@ -61,6 +61,43 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+// set custom claim/role for user
+app.put("/admin-api/user/:uid/claim", async (req, res) => {
+  const uid = req.params.uid;
+  const roleKey = req.query.roleKey;
+  const roleValue = req.query.roleValue;
+  console.log(
+    "Set customClaim/role of user " +
+      uid +
+      " to (roleKey: " +
+      roleKey +
+      ", roleValue: " +
+      roleValue +
+      ")"
+  );
+  try {
+    const customClaims = {};
+    customClaims[roleKey] = roleValue;
+    await admin.auth().setCustomUserClaims(uid, customClaims);
+    res.json({ message: "Custom claim set" });
+  } catch (error) {
+    console.error("Error setting custom claim:", error);
+    res.status(500).json({ error: "Error setting custom claim" });
+  }
+});
+
+// get full user from firebase auth
+app.get("/admin-api/user/:uid", async (req, res) => {
+  const { uid } = req.params;
+  try {
+    const user = await admin.auth().getUser(uid);
+    res.json(user);
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    res.status(500).json({ error: "Error fetching user data" });
+  }
+});
+
 app.get("/api/recipes", async (req, res) => {
   try {
     const connection = await pool.getConnection();
@@ -192,69 +229,76 @@ app.get("/api/recipes/:id", async (req, res) => {
 });
 
 // POST-Endpoint für /api/recipes - Rezept erstellen
-app.post("/api/recipes", verifyToken, upload.single("image"), async (req, res) => {
-  try {
-    // Parse the formData fields
-    const { title, description, duration, instructions, ingredients } =
-      req.body;
+app.post(
+  "/api/recipes",
+  verifyToken,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      // Parse the formData fields
+      const { title, description, duration, instructions, ingredients } =
+        req.body;
 
-    console.log("Request body:", req.body);
+      console.log("Request body:", req.body);
 
-    // Handle the uploaded image file (optional)
-    const imageUrl = req.file ? `/images/${req.file.filename}` : null;
+      // Handle the uploaded image file (optional)
+      const imageUrl = req.file ? `/images/${req.file.filename}` : null;
 
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
+      const connection = await pool.getConnection();
+      await connection.beginTransaction();
 
-    // Insert recipe into the `recipes` table
-    const recipeResult = await connection.query(
-      `
+      // Insert recipe into the `recipes` table
+      const recipeResult = await connection.query(
+        `
       INSERT INTO recipes (title, description, duration, imageUrl, instructions)
       VALUES (?, ?, ?, ?, ?)
       `,
-      [title, description, duration, imageUrl, instructions]
-    );
+        [title, description, duration, imageUrl, instructions]
+      );
 
-    console.log("Inserted recipe result:", recipeResult);
-    const recipeId = Number(recipeResult.insertId);
-    console.log("Inserted recipe ID:", recipeId);
+      console.log("Inserted recipe result:", recipeResult);
+      const recipeId = Number(recipeResult.insertId);
+      console.log("Inserted recipe ID:", recipeId);
 
-    // Insert ingredients into the `ingredients` table
-    if (ingredients && ingredients.length > 0) {
-      const ingredientValues = ingredients.map((ingredient) => [
-        recipeId,
-        ingredient.name,
-        ingredient.amount,
-      ]);
+      // Insert ingredients into the `ingredients` table
+      if (ingredients && ingredients.length > 0) {
+        const ingredientValues = ingredients.map((ingredient) => [
+          recipeId,
+          ingredient.name,
+          ingredient.amount,
+        ]);
 
-      const placeholders = ingredientValues.map(() => "(?, ?, ?)").join(", ");
-      const flattenedValues = ingredientValues.flat();
-      console.log(flattenedValues);
+        const placeholders = ingredientValues.map(() => "(?, ?, ?)").join(", ");
+        const flattenedValues = ingredientValues.flat();
+        console.log(flattenedValues);
 
-      await connection.query(
-        `
+        await connection.query(
+          `
         INSERT INTO ingredients (recipe_id, name, amount)
         VALUES ${placeholders}
         `,
-        flattenedValues
-      );
-    }
+          flattenedValues
+        );
+      }
 
-    await connection.commit();
+      await connection.commit();
 
-    res.status(201).json({ message: "Recipe created successfully", recipeId });
-    connection.release();
-  } catch (error) {
-    console.error("Error creating recipe:", error);
-    res.status(500).json({ message: "Error creating recipe" });
+      res
+        .status(201)
+        .json({ message: "Recipe created successfully", recipeId });
+      connection.release();
+    } catch (error) {
+      console.error("Error creating recipe:", error);
+      res.status(500).json({ message: "Error creating recipe" });
 
-    try {
-      await connection.rollback();
-    } catch (rollbackError) {
-      console.error("Error rolling back transaction:", rollbackError);
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("Error rolling back transaction:", rollbackError);
+      }
     }
   }
-});
+);
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
